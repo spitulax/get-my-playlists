@@ -39,10 +39,8 @@ listen_and_read :: proc(
 }
 
 read_tcp :: proc(socket: net.TCP_Socket, alloc := context.allocator) -> (res: string, ok: bool) {
-    buf := make([dynamic]byte, 1 * mem.Kilobyte, alloc)
-    defer if !ok {
-        delete(buf)
-    }
+    buf := make([dynamic]byte, 1 * mem.Kilobyte)
+    defer delete(buf)
     off := 0
     for {
         bytes_read, read_err := net.recv_tcp(socket, buf[off:])
@@ -60,7 +58,7 @@ read_tcp :: proc(socket: net.TCP_Socket, alloc := context.allocator) -> (res: st
             resize(&buf, 2 * len(buf))
         }
     }
-    return string(buf[:]), true
+    return strings.clone_from_bytes(buf[:off], alloc), true
 }
 
 write_tcp :: proc(socket: net.TCP_Socket, buf: []byte) -> (ok: bool) {
@@ -81,7 +79,7 @@ run_curl :: proc(
     ok: bool,
 ) {
     result_err: sp.Error
-    result, result_err = sp.run_prog_sync(curl, args, .Capture, alloc = alloc)
+    result, result_err = sp.run_prog_sync(curl, args, .Capture, inherit_env = false, alloc = alloc)
     if result_err != nil {
         log.errorf(
             "%s%sFailed to run `curl`: %v",
@@ -135,8 +133,13 @@ spotify_api_url :: proc(
     ) or_return
 
     output := strings.split_lines(result.stdout, context.temp_allocator)
+    if len(output) < 2 {
+        log.error(ERR_PREFIX + ": Invalid response")
+        ok = false
+        return
+    }
     response = output[0]
-    status := output[1]
+    status := output[len(output) - 1]
     error := true
     switch status {
     case "200":

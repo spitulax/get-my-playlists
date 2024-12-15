@@ -200,6 +200,19 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
 fetch :: proc(access_token: string) -> (ok: bool) {
     albums := fetch_saved_albums(access_token) or_return
     defer json.destroy_value(albums)
+    songs := fetch_liked_songs(access_token) or_return
+    defer json.destroy_value(songs)
+
+    log.info("Saved Albums:", albums)
+    log.info("Liked Songs:", songs)
+
+    //marshal_opt := json.Marshal_Options {
+    //    spec             = json.Specification.JSON,
+    //    pretty           = true,
+    //    use_spaces       = true,
+    //    spaces           = 2,
+    //    sort_maps_by_key = true,
+    //}
 
     return true
 }
