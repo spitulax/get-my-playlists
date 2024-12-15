@@ -1,5 +1,7 @@
 package get_my_playlists
 
+// TODO: Make procedures accept `loc` if they log
+
 import "base:runtime"
 import "core:crypto"
 import "core:encoding/ansi"
@@ -21,7 +23,16 @@ PROG_VERSION :: #config(PROG_VERSION, "")
 REDIRECT_PORT :: 3000
 SCOPES :: "playlist-read-private user-library-read"
 
+curl: sp.Program
+
 start :: proc() -> (ok: bool) {
+    curl_err: sp.Error
+    curl, curl_err = sp.program_check("curl")
+    if curl_err != nil {
+        log.error("`curl` was not found:", curl_err)
+        return false
+    }
+
     if len(os.args) < 2 {
         usage()
         return false
@@ -34,6 +45,12 @@ start :: proc() -> (ok: bool) {
             client_id := os.args[2]
             client_secret := os.args[3]
             auth(client_id, client_secret) or_return
+            error = false
+        }
+    case "fetch":
+        if len(os.args) == 3 {
+            access_token := os.args[2]
+            fetch(access_token) or_return
             error = false
         }
     case "--help", "-h":
@@ -110,14 +127,12 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
         return false
     }
 
-    curl := sp.program("curl")
     auth_val := base64.encode(
         transmute([]byte)fmt.tprintf("%s:%s", client_id, client_secret),
         allocator = context.temp_allocator,
     )
 
-    result, result_err := sp.run_prog_sync(
-        curl,
+    result := run_curl(
         {
             "-s",
             "-X",
@@ -136,23 +151,12 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
                 fmt.tprintf("http://localhost:%v", REDIRECT_PORT),
             ),
         },
-        .Capture,
-        alloc = context.temp_allocator,
-    )
-    if result_err != nil {
-        log.error("Authorisation failed: Failed to run `curl`:", result_err)
-        return false
-    }
-    if !sp.process_result_success(result) {
-        log.error("Authorisation failed: `curl` exited with", result.exit)
-        return false
-    }
+        "Authorisation failed",
+        context.temp_allocator,
+    ) or_return
     response := strings.split_lines(result.stdout, context.temp_allocator)
-    json_data, json_data_err := json.parse(
-        transmute([]byte)(response[0]),
-        allocator = context.temp_allocator,
-    )
-    json_root, json_root_ok := json_data.(json.Object)
+    json_data, json_data_err := json.parse_string(response[0], allocator = context.temp_allocator)
+    json_root, json_root_ok := cast_json(json_data, json.Object)
     status := response[1]
     if len(response) != 2 || json_data_err != nil || !json_root_ok {
         log.error("Authorisation failed: Malformed response")
@@ -161,8 +165,8 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
 
     switch status {
     case "200":
-        if json_root["token_type"].(json.String) != "Bearer" ||
-           json_root["scope"].(json.String) != SCOPES {
+        if (cast_json(json_root["token_type"], json.String) or_return) != "Bearer" ||
+           (cast_json(json_root["scope"], json.String) or_return) != SCOPES {
             log.error("Authorisation failed: Incorrect response")
             return false
         }
@@ -170,12 +174,13 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
         ansi_graphic(ansi.BOLD)
         fmt.print("Access Token: ")
         ansi_graphic(ansi.FG_BLUE)
-        fmt.println(json_root["access_token"].(json.String))
+        fmt.println(cast_json(json_root["access_token"], json.String) or_return)
         ansi_reset()
         ansi_graphic(ansi.BOLD)
         fmt.println(
             "Expires in:",
-            cast(time.Duration)json_root["expires_in"].(json.Float) * time.Second,
+            cast(time.Duration)(cast_json(json_root["expires_in"], json.Float) or_return) *
+            time.Second,
         )
         ansi_reset()
 
@@ -190,6 +195,13 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
         log.error("Authorisation failed: Unknown response status:", status)
         return false
     }
+}
+
+fetch :: proc(access_token: string) -> (ok: bool) {
+    albums := fetch_saved_albums(access_token) or_return
+    defer json.destroy_value(albums)
+
+    return true
 }
 
 usage :: proc() {
@@ -222,6 +234,7 @@ main :: proc() {
     ok: bool
     defer os.exit(!ok)
     defer free_all(context.temp_allocator)
+    defer net.destroy_dns_configuration()
     when ODIN_DEBUG {
         mem_track: mem.Tracking_Allocator
         mem.tracking_allocator_init(&mem_track, context.allocator)
