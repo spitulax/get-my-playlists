@@ -1,0 +1,3 @@
+[submodule "deps/subprocess.odin"]
+	path = deps/subprocess.odin
+	url = https://github.com/spitulax/subprocess.odin
