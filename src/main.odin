@@ -72,6 +72,13 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
     ansi_graphic(ansi.FG_BLUE)
     fmt.println(url)
     ansi_reset()
+    ansi_graphic(ansi.BOLD)
+    fmt.println(
+        "If you don't get redirected to localhost:3000, please read the instruction in `" +
+        PROG_NAME +
+        " --help`",
+    )
+    ansi_reset()
 
     addr := net.Endpoint{net.IP4_Loopback, REDIRECT_PORT}
     read_res := listen_and_read(addr, context.temp_allocator) or_return
@@ -186,13 +193,29 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
 }
 
 usage :: proc() {
-    fmt.println(PROG_NAME, "<subcommand> [args...]")
-    fmt.println()
-    fmt.println("Subcommands:")
-    fmt.println("    auth <client_id> <client_secret>")
-    fmt.println("        Authenticate user and give the access token")
-    fmt.println("    fetch <access_token>")
-    fmt.println("        Fetch the playlist data as a JSON string")
+    fmt.println(
+        PROG_NAME,
+        `<subcommand> [args...]"
+
+Subcommands:
+    auth <client_id> <client_secret>
+        Authenticate user and give the access token
+    fetch <access_token>
+        Fetch the playlist data as a JSON string
+
+How to authenticate and get the access token:
+- Create an app
+    - Go to https://developer.spotify.com/dashboard
+    - Fill "Redirect URIs" with "http://localhost:3000"
+    - Tick off "Web API"
+    - Anything else doesn't matter, fill it whatever you want
+- Authenticate your user
+    - Go to dashboard and select your new app
+    - Click "Settings"
+    - Copy both the client ID and client secret
+    - Run: ./get-my-playlists auth "<client_id>" "<client_secret>"
+`,
+    )
 }
 
 main :: proc() {
