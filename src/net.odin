@@ -1,6 +1,7 @@
 package get_my_playlists
 
 import "base:runtime"
+import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:mem"
@@ -107,19 +108,18 @@ run_curl :: proc(
     return result, true
 }
 
-spotify_api_url :: proc(
+spotify_api :: proc(
     url: string,
     access_token: string,
     alloc := context.allocator,
 ) -> (
-    result: sp.Process_Result,
-    response: String_Slice,
+    response: json.Object,
     ok: bool,
 ) {
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(alloc == context.temp_allocator)
     ERR_PREFIX :: "Spotify API call failed"
 
-    result = run_curl(
+    result := run_curl(
         {
             "-s",
             "-w",
@@ -129,7 +129,7 @@ spotify_api_url :: proc(
             fmt.tprint("Authorization: Bearer", access_token),
         },
         ERR_PREFIX,
-        alloc,
+        context.temp_allocator,
     ) or_return
 
     output := strings.split_lines(result.stdout, context.temp_allocator)
@@ -138,7 +138,7 @@ spotify_api_url :: proc(
         ok = false
         return
     }
-    response = output[0]
+    response_str := output[0]
     status := output[len(output) - 1]
     error := true
     switch status {
@@ -153,35 +153,38 @@ spotify_api_url :: proc(
         )
     case "429":
         log.error(ERR_PREFIX + ": The app has exceeded its rate limits")
+    case "404":
+        log.error(ERR_PREFIX + ": URL does not exist:", url)
+    case:
+        log.error(ERR_PREFIX + ": Unknown response:", status)
     }
     if error {
         ok = false
         return
     }
 
-    return result, response, true
+    response_json, response_err := json.parse_string(response_str, allocator = alloc)
+    if response_err != nil {
+        log.error(ERR_PREFIX + ": Spotify API response is not a valid JSON")
+        ok = false
+        return
+    }
+    response = cast_json(response_json, json.Object) or_return
+
+    return response, true
 }
 
-spotify_api :: proc(
+spotify_api_url :: proc(
     path: string,
-    access_token: string,
     args: map[string]string,
-    alloc := context.allocator,
-) -> (
-    result: sp.Process_Result,
-    response: String_Slice,
-    ok: bool,
-) {
+    alloc := context.temp_allocator,
+) -> string {
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(alloc == context.temp_allocator)
-
-    return spotify_api_url(
-        fmt.tprintf(
-            "https://api.spotify.com/v1%s?%s",
-            path,
-            query_string_stringify(args, context.temp_allocator),
-        ),
-        access_token,
-        alloc,
+    return fmt.aprintf(
+        "https://api.spotify.com/v1%s?%s",
+        path,
+        query_string_stringify(args, context.temp_allocator),
+        allocator = alloc,
     )
 }
 

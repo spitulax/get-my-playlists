@@ -132,6 +132,7 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
         allocator = context.temp_allocator,
     )
 
+    URL :: "https://accounts.spotify.com/api/token"
     result := run_curl(
         {
             "-s",
@@ -139,7 +140,7 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
             "POST",
             "-w",
             "\\n%{http_code}",
-            "https://accounts.spotify.com/api/token",
+            URL,
             "-H",
             "Content-Type: application/x-www-form-urlencoded",
             "-H",
@@ -191,6 +192,9 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
             json_root["error_description"],
         )
         return false
+    case "404":
+        log.error("Authorisation failed: URL does not exist:", URL)
+        return false
     case:
         log.error("Authorisation failed: Unknown response status:", status)
         return false
@@ -198,21 +202,33 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
 }
 
 fetch :: proc(access_token: string) -> (ok: bool) {
-    albums := fetch_saved_albums(access_token) or_return
-    defer json.destroy_value(albums)
-    songs := fetch_liked_songs(access_token) or_return
-    defer json.destroy_value(songs)
+    marshal_opt := json.Marshal_Options {
+        spec             = json.Specification.JSON,
+        pretty           = true,
+        use_spaces       = true,
+        spaces           = 2,
+        sort_maps_by_key = true,
+    }
 
-    log.info("Saved Albums:", albums)
-    log.info("Liked Songs:", songs)
+    obj := make(json.Object, 3)
+    defer json.destroy_value(obj)
+    ansi_graphic(ansi.BOLD);fmt.println("Requesting Playlists...");ansi_reset()
+    object_insert(&obj, "playlists", fetch_user_playlists(access_token) or_return)
+    ansi_graphic(ansi.BOLD);fmt.println("Requesting Liked Songs...");ansi_reset()
+    object_insert(&obj, "liked_songs", fetch_liked_songs(access_token) or_return)
+    ansi_graphic(ansi.BOLD);fmt.println("Requesting Saved Albums...");ansi_reset()
+    object_insert(&obj, "saved_albums", fetch_saved_albums(access_token) or_return)
 
-    //marshal_opt := json.Marshal_Options {
-    //    spec             = json.Specification.JSON,
-    //    pretty           = true,
-    //    use_spaces       = true,
-    //    spaces           = 2,
-    //    sort_maps_by_key = true,
-    //}
+    file, file_err := os.open("output.json", os.O_WRONLY | os.O_TRUNC | os.O_CREATE, 0o644)
+    defer os.close(file)
+    if file_err != nil {
+        log.error("Failed to open output.json:", file_err)
+        return false
+    }
+    if err := json.marshal_to_writer(os.stream_from_handle(file), obj, &marshal_opt); err != nil {
+        log.error("Failed to marshal data:", err)
+        return false
+    }
 
     return true
 }

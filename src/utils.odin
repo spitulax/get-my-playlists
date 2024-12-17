@@ -130,3 +130,13 @@ object_get :: proc(value: json.Value, path: []string, $T: typeid) -> (res: T, ok
     unreachable()
 }
 
+object_insert :: proc(
+    self: ^json.Object,
+    key: string,
+    value: json.Value,
+    clone_value: bool = false,
+) {
+    alloc := (cast(^runtime.Raw_Map)self).allocator
+    self[strings.clone(key, alloc)] = json.clone_value(value, alloc) if clone_value else value
+}
+
