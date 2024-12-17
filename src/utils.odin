@@ -79,9 +79,16 @@ at_split_lines :: proc(s: string, idx: int, alloc := context.allocator) -> strin
     return strings.clone(strs[idx], alloc)
 }
 
-cast_json :: proc(value: json.Value, $T: typeid) -> (new_val: T, ok: bool) {
+cast_json :: proc(
+    value: json.Value,
+    $T: typeid,
+    loc := #caller_location,
+) -> (
+    new_val: T,
+    ok: bool,
+) {
     if new_val, ok = value.(T); !ok {
-        log.errorf("JSON object cannot be converted to `%v`", typeid_of(T))
+        log.errorf("JSON object cannot be converted to `%v`", typeid_of(T), location = loc)
         ok = false
         return
     }

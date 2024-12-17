@@ -58,15 +58,9 @@ parse_args :: proc() -> (ok: bool) {
         client_secret := next_args(&args) or_return
         auth(client_id, client_secret) or_return
     case "fetch":
-        out_file := next_args(&args) or_return
         access_token := next_args(&args) or_return
-        data := fetch(access_token) or_return
-        defer delete(data)
-        if !os.write_entire_file(out_file, data) {
-            log.error("Failed to write to file:", out_file)
-            ok = false
-            return
-        }
+        out_file := next_args(&args) or_return
+        fetch_to_file(access_token, out_file) or_return
     case "--help", "-h":
         usage()
     case "--version":
@@ -211,32 +205,45 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
     }
 }
 
-fetch :: proc(access_token: string, alloc := context.allocator) -> (data: []byte, ok: bool) {
-    marshal_opt := json.Marshal_Options {
-        spec             = json.Specification.JSON,
-        pretty           = true,
-        use_spaces       = true,
-        spaces           = 2,
-        sort_maps_by_key = true,
-    }
-
-    obj := make(json.Object, 3)
-    defer json.destroy_value(obj)
-    ansi_graphic(ansi.BOLD);fmt.println("Requesting Playlists...");ansi_reset()
-    object_insert(&obj, "playlists", fetch_user_playlists(access_token) or_return)
+fetch :: proc(access_token: string, alloc := context.allocator) -> (data: json.Object, ok: bool) {
+    obj := make(json.Object, 3, alloc)
     ansi_graphic(ansi.BOLD);fmt.println("Requesting Liked Songs...");ansi_reset()
     object_insert(&obj, "liked_songs", fetch_liked_songs(access_token) or_return)
+    fmt.println()
+    ansi_graphic(ansi.BOLD);fmt.println("Requesting Playlists...");ansi_reset()
+    object_insert(&obj, "playlists", fetch_user_playlists(access_token) or_return)
+    fmt.println()
     ansi_graphic(ansi.BOLD);fmt.println("Requesting Saved Albums...");ansi_reset()
     object_insert(&obj, "saved_albums", fetch_saved_albums(access_token) or_return)
 
-    marshal_data, marshal_err := json.marshal(obj, marshal_opt, alloc)
+    return obj, true
+}
+
+fetch_to_file :: proc(access_token: string, out_file: string) -> (ok: bool) {
+    data := fetch(access_token) or_return
+    defer json.destroy_value(data)
+    marshal_data, marshal_err := json.marshal(
+        data,
+        {
+            spec = json.Specification.JSON,
+            pretty = true,
+            use_spaces = true,
+            spaces = 2,
+            sort_maps_by_key = true,
+        },
+    )
     if marshal_err != nil {
         log.error("Failed to marshal data:", marshal_err)
         ok = false
         return
     }
-
-    return marshal_data, true
+    defer delete(marshal_data)
+    if err := os.write_entire_file_or_err(out_file, marshal_data); err != nil {
+        log.errorf("Failed to write to `%s`: %v", out_file, err)
+        ok = false
+        return
+    }
+    return true
 }
 
 usage :: proc() {
@@ -247,7 +254,7 @@ usage :: proc() {
 Subcommands:
     auth <client_id> <client_secret>
         Authenticate user and give the access token
-    fetch <out_file> <access_token>
+    fetch <access_token> <out_file>
         Fetch the playlist data as a JSON file
 
 How to authenticate and get the access token:

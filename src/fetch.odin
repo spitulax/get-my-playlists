@@ -11,12 +11,12 @@ fetch_name_url_objs :: proc(
     access_token: string,
     alloc := context.allocator,
 ) -> (
-    data: json.Array,
+    data: json.Object,
     ok: bool,
 ) {
     process :: proc(
         url: string,
-        array: ^json.Array,
+        object: ^json.Object,
         item_data_key: string,
         access_token: string,
         alloc: runtime.Allocator,
@@ -33,6 +33,15 @@ fetch_name_url_objs :: proc(
             runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
             obj := make(json.Object, 2, alloc)
             actual_item := object_get(item, {item_data_key}, json.Object) or_return
+            artists_obj := cast_json(actual_item["artists"], json.Array) or_return
+            artists := make(json.Array, len(artists_obj), alloc)
+            for x, i in artists_obj {
+                artists[i] = json.clone_value(
+                    object_get(x, {"name"}, json.String) or_return,
+                    alloc,
+                )
+            }
+            object_insert(&obj, "artists", artists)
             object_insert(
                 &obj,
                 "name",
@@ -45,7 +54,7 @@ fetch_name_url_objs :: proc(
                 object_get(actual_item, {"external_urls", "spotify"}, json.String) or_return,
                 true,
             )
-            append(array, obj)
+            object_insert(object, cast_json(actual_item["id"], json.String) or_return, obj)
         }
 
         next_json := response["next"]
@@ -53,7 +62,7 @@ fetch_name_url_objs :: proc(
         case json.Null:
             return true
         case json.String:
-            process(next, array, item_data_key, access_token, alloc) or_return
+            process(next, object, item_data_key, access_token, alloc) or_return
         case json.Integer, json.Float, json.Boolean, json.Array, json.Object:
             log.error("Spotify API response is invalid")
             return false
@@ -62,7 +71,7 @@ fetch_name_url_objs :: proc(
         return true
     }
 
-    data = make(json.Array, alloc)
+    data = make(json.Object, alloc)
     context.user_index = 0
     process(url, &data, item_data_key, access_token, alloc) or_return
 
@@ -98,9 +107,11 @@ fetch_user_playlists :: proc(
             name := object_get(item, {"name"}, json.String) or_return
             fmt.println("Found playlist:", name)
             id := object_get(item, {"id"}, json.String) or_return
+            obj := make(json.Object, 2, alloc)
+            object_insert(&obj, "name", name, true)
             object_insert(
-                object,
-                name,
+                &obj,
+                "tracks",
                 fetch_name_url_objs(
                     spotify_api_url(fmt.tprintf("/playlists/%s/tracks", id), common_args()),
                     "track",
@@ -108,6 +119,7 @@ fetch_user_playlists :: proc(
                     alloc,
                 ) or_return,
             )
+            object_insert(object, id, obj)
         }
 
         next_json := response["next"]
@@ -142,7 +154,7 @@ fetch_liked_songs :: proc(
     access_token: string,
     alloc := context.allocator,
 ) -> (
-    data: json.Array,
+    data: json.Object,
     ok: bool,
 ) {
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(alloc == context.temp_allocator)
@@ -158,7 +170,7 @@ fetch_saved_albums :: proc(
     access_token: string,
     alloc := context.allocator,
 ) -> (
-    data: json.Array,
+    data: json.Object,
     ok: bool,
 ) {
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(alloc == context.temp_allocator)
