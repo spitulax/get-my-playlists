@@ -1,7 +1,5 @@
 package get_my_playlists
 
-// TODO: Make procedures accept `loc` if they log
-
 import "base:runtime"
 import "core:crypto"
 import "core:encoding/ansi"
@@ -33,42 +31,54 @@ start :: proc() -> (ok: bool) {
         return false
     }
 
-    if len(os.args) < 2 {
-        usage()
-        return false
+    parse_args() or_return
+
+    return true
+}
+
+parse_args :: proc() -> (ok: bool) {
+    @(require_results)
+    next_args :: proc(args: ^[]string) -> (arg: string, ok: bool) {
+        if len(args^) <= 0 {
+            fmt.eprintln("Expected more arguments")
+            ok = false
+            return
+        }
+        curr := args[0]
+        args^ = args[1:]
+        return curr, true
     }
 
-    error := true
-    switch os.args[1] {
+    args := os.args
+    _ = next_args(&args) or_return
+    subcommand := next_args(&args) or_return
+    switch subcommand {
     case "auth":
-        if len(os.args) == 4 {
-            client_id := os.args[2]
-            client_secret := os.args[3]
-            auth(client_id, client_secret) or_return
-            error = false
-        }
+        client_id := next_args(&args) or_return
+        client_secret := next_args(&args) or_return
+        auth(client_id, client_secret) or_return
     case "fetch":
-        if len(os.args) == 3 {
-            access_token := os.args[2]
-            fetch(access_token) or_return
-            error = false
+        out_file := next_args(&args) or_return
+        access_token := next_args(&args) or_return
+        data := fetch(access_token) or_return
+        defer delete(data)
+        if !os.write_entire_file(out_file, data) {
+            log.error("Failed to write to file:", out_file)
+            ok = false
+            return
         }
     case "--help", "-h":
         usage()
-        return true
     case "--version":
         fmt.println(PROG_NAME, PROG_VERSION)
-        return true
     case:
-        fmt.eprintln("Invalid subcommand:", os.args[1])
+        fmt.eprintln("Invalid subcommand:", subcommand)
+        ok = false
+        return
     }
 
-    if error {
-        usage()
-        return false
-    }
-
-    return true
+    ok = true
+    return
 }
 
 auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
@@ -201,7 +211,7 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
     }
 }
 
-fetch :: proc(access_token: string) -> (ok: bool) {
+fetch :: proc(access_token: string, alloc := context.allocator) -> (data: []byte, ok: bool) {
     marshal_opt := json.Marshal_Options {
         spec             = json.Specification.JSON,
         pretty           = true,
@@ -219,18 +229,14 @@ fetch :: proc(access_token: string) -> (ok: bool) {
     ansi_graphic(ansi.BOLD);fmt.println("Requesting Saved Albums...");ansi_reset()
     object_insert(&obj, "saved_albums", fetch_saved_albums(access_token) or_return)
 
-    file, file_err := os.open("output.json", os.O_WRONLY | os.O_TRUNC | os.O_CREATE, 0o644)
-    defer os.close(file)
-    if file_err != nil {
-        log.error("Failed to open output.json:", file_err)
-        return false
-    }
-    if err := json.marshal_to_writer(os.stream_from_handle(file), obj, &marshal_opt); err != nil {
-        log.error("Failed to marshal data:", err)
-        return false
+    marshal_data, marshal_err := json.marshal(obj, marshal_opt, alloc)
+    if marshal_err != nil {
+        log.error("Failed to marshal data:", marshal_err)
+        ok = false
+        return
     }
 
-    return true
+    return marshal_data, true
 }
 
 usage :: proc() {
@@ -241,8 +247,8 @@ usage :: proc() {
 Subcommands:
     auth <client_id> <client_secret>
         Authenticate user and give the access token
-    fetch <access_token>
-        Fetch the playlist data as a JSON string
+    fetch <out_file> <access_token>
+        Fetch the playlist data as a JSON file
 
 How to authenticate and get the access token:
 - Create an app
