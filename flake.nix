@@ -1,5 +1,5 @@
 {
-  description = "An Odin project";
+  description = "Extracts songs from your Spotify playlists, liked songs, and saved albums";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
