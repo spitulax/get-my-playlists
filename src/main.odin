@@ -11,6 +11,7 @@ import "core:log"
 import "core:mem"
 import "core:net"
 import "core:os"
+import path "core:path/filepath"
 import "core:strings"
 import "core:time"
 import sp "deps:subprocess.odin"
@@ -21,15 +22,16 @@ PROG_VERSION :: #config(PROG_VERSION, "")
 REDIRECT_PORT :: 3000
 SCOPES :: "playlist-read-private user-library-read"
 
-curl: sp.Program
+g_curl: sp.Program
 
 start :: proc() -> (ok: bool) {
     curl_err: sp.Error
-    curl, curl_err = sp.program_check("curl")
+    g_curl, curl_err = sp.program_check("curl")
     if curl_err != nil {
         log.error("`curl` was not found:", curl_err)
         return false
     }
+    defer sp.program_destroy(&g_curl)
 
     parse_args() or_return
 
@@ -38,9 +40,13 @@ start :: proc() -> (ok: bool) {
 
 parse_args :: proc() -> (ok: bool) {
     @(require_results)
-    next_args :: proc(args: ^[]string) -> (arg: string, ok: bool) {
+    next_args :: proc(args: ^[]string, loc := #caller_location) -> (arg: string, ok: bool) {
         if len(args^) <= 0 {
-            fmt.eprintln("Expected more arguments")
+            when ODIN_DEBUG {
+                log.error("Expected more arguments", location = loc)
+            } else {
+                fmt.eprintln("Expected more arguments")
+            }
             ok = false
             return
         }
@@ -61,6 +67,24 @@ parse_args :: proc() -> (ok: bool) {
         access_token := next_args(&args) or_return
         out_file := next_args(&args) or_return
         fetch_to_file(access_token, out_file) or_return
+    case "download":
+        access_token, in_file, out_dir: string
+        for {
+            arg := next_args(&args) or_return
+            switch arg {
+            case "-i":
+                in_file = next_args(&args) or_return
+            case "-a":
+                access_token = next_args(&args) or_return
+            case:
+                out_dir = arg
+            }
+
+            if out_dir != "" && (in_file != "" || access_token != "") {
+                break
+            }
+        }
+        download(access_token, in_file, out_dir) or_return
     case "--help", "-h":
         usage()
     case "--version":
@@ -159,7 +183,7 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
         "Authorisation failed",
         context.temp_allocator,
     ) or_return
-    response := strings.split_lines(result.stdout, context.temp_allocator)
+    response := strings.split_lines(string(result.stdout), context.temp_allocator)
     json_data, json_data_err := json.parse_string(response[0], allocator = context.temp_allocator)
     json_root, json_root_ok := cast_json(json_data, json.Object)
     status := response[1]
@@ -207,6 +231,9 @@ auth :: proc(client_id: string, client_secret: string) -> (ok: bool) {
 
 fetch :: proc(access_token: string, alloc := context.allocator) -> (data: json.Object, ok: bool) {
     obj := make(json.Object, 3, alloc)
+    defer if !ok {
+        json.destroy_value(obj, alloc)
+    }
     ansi_graphic(ansi.BOLD);fmt.println("Requesting Liked Songs...");ansi_reset()
     object_insert(&obj, "liked_songs", fetch_liked_songs(access_token) or_return)
     fmt.println()
@@ -219,30 +246,86 @@ fetch :: proc(access_token: string, alloc := context.allocator) -> (data: json.O
     return obj, true
 }
 
-fetch_to_file :: proc(access_token: string, out_file: string) -> (ok: bool) {
+fetch_to_file :: proc(access_token, out_file: string) -> (ok: bool) {
     data := fetch(access_token) or_return
     defer json.destroy_value(data)
-    marshal_data, marshal_err := json.marshal(
-        data,
-        {
-            spec = json.Specification.JSON,
-            pretty = true,
-            use_spaces = true,
-            spaces = 2,
-            sort_maps_by_key = true,
-        },
-    )
-    if marshal_err != nil {
-        log.error("Failed to marshal data:", marshal_err)
-        ok = false
-        return
+    marshal_to_file(out_file, data) or_return
+    return true
+}
+
+download :: proc(access_token, in_file, out_dir: string) -> (ok: bool) {
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+
+    from_file := in_file != ""
+    file_content: []byte
+    data: json.Object
+    if from_file {
+        file_err: os.Error
+        file_content, file_err = os.read_entire_file_or_err(in_file)
+        if file_err != nil {
+            log.errorf("Failed to read `%s`: %v", in_file, file_err)
+            return false
+        }
+        defer delete(file_content)
+        data_json, json_err := json.parse(file_content)
+        if json_err != nil {
+            log.errorf("Failed parse JSON from `%s`: %v", in_file, json_err)
+            return false
+        }
+        data = cast_json(data_json, json.Object) or_return
+    } else {
+        if access_token != "" {
+            unreachable()
+        }
+        data = fetch(access_token) or_return
     }
-    defer delete(marshal_data)
-    if err := os.write_entire_file_or_err(out_file, marshal_data); err != nil {
-        log.errorf("Failed to write to `%s`: %v", out_file, err)
-        ok = false
-        return
+    defer json.destroy_value(data)
+
+    mkdir_if_not_exists(out_dir) or_return
+
+    //data_path := path.join({out_dir, "data.json"}, context.temp_allocator)
+    //if from_file {
+    //    if err := os.write_entire_file_or_err(data_path, file_content); err != nil {
+    //        log.errorf("Could not write to `%s`: %v", data_path, err)
+    //        return false
+    //    }
+    //} else {
+    //    marshal_to_file(data_path, data) or_return
+    //}
+
+    music_dir := path.join({out_dir, ".music"}, context.temp_allocator)
+    mkdir_if_not_exists(music_dir)
+
+    cmd, cmd_err := sp.command_make("spotdl")
+    if cmd_err != nil {
+        log.error("Failed to create `spotdl` command:", cmd_err)
+        return false
     }
+    defer sp.command_destroy(&cmd)
+    sp.command_append(&cmd, "--preload")
+    sp.command_append(&cmd, "--format", "mp3")
+    sp.command_append(&cmd, "--overwrite", "skip")
+    sp.command_append(&cmd, "--print-errors")
+    sp.command_append(&cmd, "--playlist-numbering")
+    sp.command_append(&cmd, "--output", "{track-id}.{output-ext}")
+    sp.command_append(&cmd, "download")
+    for _, v in cast_json(data["liked_songs"], json.Object) or_return {
+        sp.command_append(&cmd, object_get(v, {"url"}, json.String) or_return)
+    }
+
+    old_dir := os.get_current_directory(context.temp_allocator)
+    chdir(music_dir) or_return
+    spotdl_result, spotdl_err := sp.command_run_sync(cmd, alloc = context.temp_allocator)
+    if spotdl_err != nil {
+        log.error("Failed to run spotdl:", spotdl_err)
+        return false
+    }
+    if !sp.result_success(spotdl_result) {
+        log.error("`spotdl` exited with status:", spotdl_result.exit)
+        return false
+    }
+    chdir(old_dir) or_return
+
     return true
 }
 

@@ -72,6 +72,10 @@ fetch_name_url_objs :: proc(
     }
 
     data = make(json.Object, alloc)
+    defer if !ok {
+        delete(data)
+    }
+
     context.user_index = 0
     process(url, &data, item_data_key, access_token, alloc) or_return
 
@@ -142,6 +146,9 @@ fetch_user_playlists :: proc(
     args["offset"] = "0"
 
     data = make(json.Object, alloc)
+    defer if !ok {
+        delete(data)
+    }
 
     context.user_index = 0
     process(spotify_api_url("/me/playlists", common_args()), &data, access_token, alloc) or_return

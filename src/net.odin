@@ -76,11 +76,16 @@ run_curl :: proc(
     err_prefix: string = "",
     alloc := context.allocator,
 ) -> (
-    result: sp.Process_Result,
+    result: sp.Result,
     ok: bool,
 ) {
     result_err: sp.Error
-    result, result_err = sp.run_prog_sync(curl, args, .Capture, inherit_env = false, alloc = alloc)
+    result, result_err = sp.program_run(
+        g_curl,
+        args,
+        {output = .Capture, zero_env = true},
+        alloc = alloc,
+    )
     if result_err != nil {
         log.errorf(
             "%s%sFailed to run `curl`: %v",
@@ -92,15 +97,15 @@ run_curl :: proc(
         return
     }
     defer if !ok {
-        sp.process_result_destroy(&result, alloc)
+        sp.result_destroy(&result, alloc)
     }
-    if !sp.process_result_success(result) {
+    if !sp.result_success(result) {
         log.errorf(
             "%s%s`curl` exited with status %v:\n%s",
             err_prefix,
             ": " if len(err_prefix) > 0 else "",
             result.exit,
-            result.stderr,
+            string(result.stderr),
         )
         ok = false
         return
@@ -132,7 +137,7 @@ spotify_api :: proc(
         context.temp_allocator,
     ) or_return
 
-    output := strings.split_lines(result.stdout, context.temp_allocator)
+    output := strings.split_lines(string(result.stdout), context.temp_allocator)
     if len(output) < 2 {
         log.error(ERR_PREFIX + ": Invalid response")
         ok = false

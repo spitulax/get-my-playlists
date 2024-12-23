@@ -7,9 +7,18 @@ import "core:fmt"
 import "core:io"
 import "core:log"
 import "core:net"
+import "core:os"
 import "core:strings"
 
 String_Slice :: string
+
+g_marshal_opt := json.Marshal_Options {
+    spec             = json.Specification.JSON,
+    pretty           = true,
+    use_spaces       = true,
+    spaces           = 2,
+    sort_maps_by_key = true,
+}
 
 query_string_stringify :: proc(queries: map[string]string, alloc := context.allocator) -> string {
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(alloc == context.temp_allocator)
@@ -145,5 +154,40 @@ object_insert :: proc(
 ) {
     alloc := (cast(^runtime.Raw_Map)self).allocator
     self[strings.clone(key, alloc)] = json.clone_value(value, alloc) if clone_value else value
+}
+
+mkdir_if_not_exists :: proc(path: string) -> (ok: bool) {
+    if os.exists(path) && !os.is_dir(path) {
+        log.errorf("`%s` already exists but it is not a directory", path)
+        return false
+    } else if !os.exists(path) {
+        if err := os.make_directory(path); err != nil {
+            log.errorf("Failed to create directory `%s`: %v", path, err)
+            return false
+        }
+    }
+    return true
+}
+
+marshal_to_file :: proc(path: string, value: any) -> (ok: bool) {
+    marshal_data, marshal_err := json.marshal(value, g_marshal_opt)
+    if marshal_err != nil {
+        log.error("Failed to marshal data:", marshal_err)
+        return false
+    }
+    defer delete(marshal_data)
+    if err := os.write_entire_file_or_err(path, marshal_data); err != nil {
+        log.errorf("Failed to write to `%s`: %v", path, err)
+        return false
+    }
+    return true
+}
+
+chdir :: proc(path: string) -> (ok: bool) {
+    if err := os.set_current_directory(path); err != nil {
+        log.error("Failed to change directory:", err)
+        return false
+    }
+    return true
 }
 
