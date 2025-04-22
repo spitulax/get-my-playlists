@@ -40,8 +40,10 @@ listen_and_read :: proc(
 }
 
 read_tcp :: proc(socket: net.TCP_Socket, alloc := context.allocator) -> (res: string, ok: bool) {
-    buf := make([dynamic]byte, 1 * mem.Kilobyte)
-    defer delete(buf)
+    buf := make([dynamic]byte, 1 * mem.Kilobyte, alloc)
+    defer if !ok {
+        delete(buf)
+    }
     off := 0
     for {
         bytes_read, read_err := net.recv_tcp(socket, buf[off:])
@@ -59,7 +61,7 @@ read_tcp :: proc(socket: net.TCP_Socket, alloc := context.allocator) -> (res: st
             resize(&buf, 2 * len(buf))
         }
     }
-    return strings.clone_from_bytes(buf[:off], alloc), true
+    return string(buf[:off]), true
 }
 
 write_tcp :: proc(socket: net.TCP_Socket, buf: []byte) -> (ok: bool) {

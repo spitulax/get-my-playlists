@@ -22,6 +22,8 @@ PROG_VERSION :: #config(PROG_VERSION, "")
 REDIRECT_PORT :: 3000
 SCOPES :: "playlist-read-private user-library-read"
 
+// TODO: Multithreading
+
 g_curl: sp.Program
 
 start :: proc() -> (ok: bool) {
@@ -303,12 +305,14 @@ download :: proc(access_token, in_file, out_dir: string) -> (ok: bool) {
     }
     defer sp.command_destroy(&cmd)
     sp.command_append(&cmd, "--preload")
-    sp.command_append(&cmd, "--format", "mp3")
-    sp.command_append(&cmd, "--overwrite", "skip")
+    //sp.command_append(&cmd, "--format", "mp3")
+    //sp.command_append(&cmd, "--overwrite", "skip")
     sp.command_append(&cmd, "--print-errors")
     sp.command_append(&cmd, "--playlist-numbering")
-    sp.command_append(&cmd, "--output", "{track-id}.{output-ext}")
-    sp.command_append(&cmd, "download")
+    sp.command_append(&cmd, "--save-file", "music.spotdl")
+    //sp.command_append(&cmd, "--output", "{track-id}.{output-ext}")
+    //sp.command_append(&cmd, "download")
+    sp.command_append(&cmd, "save")
     for _, v in cast_json(data["liked_songs"], json.Object) or_return {
         sp.command_append(&cmd, object_get(v, {"url"}, json.String) or_return)
     }
@@ -357,9 +361,10 @@ How to authenticate and get the access token:
 
 main :: proc() {
     ok: bool
-    defer os.exit(!ok)
+    defer if !ok {
+        os.exit(1)
+    }
     defer free_all(context.temp_allocator)
-    defer net.destroy_dns_configuration()
     when ODIN_DEBUG {
         mem_track: mem.Tracking_Allocator
         mem.tracking_allocator_init(&mem_track, context.allocator)
