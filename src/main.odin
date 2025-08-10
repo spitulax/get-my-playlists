@@ -2,7 +2,7 @@ package get_my_playlists
 
 import "base:runtime"
 import "core:crypto"
-import "core:encoding/ansi"
+import "core:terminal/ansi"
 import "core:encoding/base64"
 import "core:encoding/json"
 import "core:encoding/uuid"
@@ -374,13 +374,13 @@ main :: proc() {
             if len(mem_track.allocation_map) > 0 {
                 fmt.eprintfln("### %v unfreed allocations ###", len(mem_track.allocation_map))
                 for _, v in mem_track.allocation_map {
-                    fmt.eprintfln(" -> %v bytes from %v", v.size, v.location)
+                    fmt.eprintfln(" -> %v bytes from %v (%v)", v.size, v.location, v.memory)
                 }
             }
             if len(mem_track.bad_free_array) > 0 {
                 fmt.eprintfln("### %v bad frees ###", len(mem_track.bad_free_array))
-                for x in mem_track.bad_free_array {
-                    fmt.eprintfln(" -> %p from %v", x.memory, x.location)
+                for v in mem_track.bad_free_array {
+                    fmt.eprintfln(" -> %p from %v", v.memory, v.location)
                 }
             }
             fmt.print("\033[0m")

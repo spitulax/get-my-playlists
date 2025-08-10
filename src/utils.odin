@@ -1,7 +1,7 @@
 package get_my_playlists
 
 import "base:runtime"
-import "core:encoding/ansi"
+import "core:terminal/ansi"
 import "core:encoding/json"
 import "core:fmt"
 import "core:io"
@@ -104,9 +104,9 @@ cast_json :: proc(
     return new_val, true
 }
 
-object_get :: proc(value: json.Value, path: []string, $T: typeid) -> (res: T, ok: bool) {
+_object_get_internal:: proc(value: json.Value, path: []string, loc := #caller_location) -> (res: json.Value, key_name: string, ok: bool) {
     if len(path) <= 0 {
-        log.error("`path` is empty")
+        log.error("`path` is empty", location = loc)
         ok = false
         return
     }
@@ -119,7 +119,7 @@ object_get :: proc(value: json.Value, path: []string, $T: typeid) -> (res: T, ok
         if i >= 0 {
             cur_value_ok: bool
             if cur_value, cur_value_ok = prev_obj[key]; !cur_value_ok {
-                log.errorf("`%s` does not exist in `%s`", key, prev_key)
+                log.errorf("`%s` does not exist in `%s`", key, prev_key, location = loc)
                 ok = false
                 return
             }
@@ -127,23 +127,33 @@ object_get :: proc(value: json.Value, path: []string, $T: typeid) -> (res: T, ok
 
         if i < len(path) - 1 {
             prev_obj_ok: bool
-            if prev_obj, prev_obj_ok = cast_json(cur_value, json.Object); !prev_obj_ok {
-                log.errorf("`%s` is not an object, cannot index it", key)
+            if prev_obj, prev_obj_ok = cast_json(cur_value, json.Object, loc); !prev_obj_ok {
+                log.errorf("`%s` is not an object, cannot index it", key, location = loc)
                 ok = false
                 return
             }
         } else {
-            res_ok: bool
-            if res, res_ok = cast_json(cur_value, T); !res_ok {
-                log.errorf("`%s` cannot be converted to `%v`", key, typeid_of(T))
-                ok = false
-                return
-            }
-            return res, true
+            return cur_value, key, true
         }
         prev_key = key
     }
     unreachable()
+}
+
+object_get_generic :: proc(value: json.Value, path: []string, loc := #caller_location) -> (res: json.Value, ok: bool) {
+    res, _ = _object_get_internal(value, path, loc) or_return
+    return res, true
+}
+
+object_get :: proc(value: json.Value, path: []string, $T: typeid, loc := #caller_location) -> (res: T, ok: bool) {
+    object, key := _object_get_internal(value, path, loc) or_return
+    res_ok: bool
+    if res, res_ok = cast_json(object, T, loc); !res_ok {
+        log.errorf("`%s` cannot be converted to `%v`", key, typeid_of(T), location = loc)
+        ok = false
+        return
+    }
+    return res, true
 }
 
 object_insert :: proc(
@@ -151,9 +161,14 @@ object_insert :: proc(
     key: string,
     value: json.Value,
     clone_value: bool = false,
+    loc := #caller_location,
 ) {
     alloc := (cast(^runtime.Raw_Map)self).allocator
-    self[strings.clone(key, alloc)] = json.clone_value(value, alloc) if clone_value else value
+    if elem, ok := self[key]; ok {
+        json.destroy_value(elem, loc = loc)
+        delete_key(self, key)
+    }
+    self[strings.clone(key, alloc, loc)] = json.clone_value(value, alloc) if clone_value else value
 }
 
 mkdir_if_not_exists :: proc(path: string) -> (ok: bool) {

@@ -36,8 +36,13 @@ fetch_name_url_objs :: proc(
             artists_obj := cast_json(actual_item["artists"], json.Array) or_return
             artists := make(json.Array, len(artists_obj), alloc)
             for x, i in artists_obj {
+                name := object_get_generic(x, {"name"}) or_return
+                // if `name` is null then we may be trying to fetch a podcast, use `type` instead
+                if _, cast_ok := name.(json.Null); cast_ok {
+                    name = object_get_generic(x, {"type"}) or_return
+                }
                 artists[i] = json.clone_value(
-                    object_get(x, {"name"}, json.String) or_return,
+                    cast_json(name, json.String) or_return,
                     alloc,
                 )
             }

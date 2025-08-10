@@ -16,7 +16,7 @@
           inherit system;
           overlays = [
             (final: prev: {
-              inherit (mypkgs.packages.${final.system}) odin;
+              odin = mypkgs.packages.${final.system}.odin-git;
             })
             self.overlays.default
           ];

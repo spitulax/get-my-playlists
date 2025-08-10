@@ -1,2 +1,4 @@
 build
 result
+outputs
+spotify_playlists.json
